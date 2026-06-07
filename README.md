@@ -303,17 +303,21 @@ LightRoute/
     memory/                      # 用户记忆
     ugc/                         # 示例评价数据
     models/                      # 本地模型资源
-  docs/                          # 技术方案、部署、演示脚本
+  docs/                          # 项目架构、技术解决方案、部署、用户手册、演示脚本等文档
   tests/                         # 纯 Python 检查脚本
 ```
 
 ## 📚 文档导航
 
-- 🧠 [技术方案](docs/technical_solution.md)
-- 👋 [用户使用手册](docs/user_manual.md)
-- 🚀 [部署文档](docs/deployment.md)
-- 🎥 [视频演示脚本](docs/demo_script.md)
-- 🧭 [架构图与核心链路](docs/architecture.md)
+- 🧭 [项目架构](docs/项目架构.md)：项目目录、核心模块和主链路说明。
+- 🧠 [技术解决方案](docs/技术解决方案.md)：整体技术方案、架构图、技术栈和实现边界。
+- 📊 [当前架构报告](docs/当前架构报告.md)：当前系统架构状态、模块关系和阶段性总结。
+- 🧪 [路线规划报告](docs/route_planning_report.md)：路线规划算法、评分逻辑和结果分析。
+- 🗣️ [路线规划展示大纲](docs/route_planning_presentation_outline.md)：答辩或演示时的路线规划讲解提纲。
+- 🧾 [项目变更代码导读](docs/project_changes_code_walkthrough.md)：代码改动、模块变更和实现路径说明。
+- 👋 [用户手册](docs/用户手册.md)：面向普通用户的使用说明和交互流程。
+- 🚀 [部署文档](docs/部署文档.md)：环境准备、API Key 配置和运行部署步骤。
+- 🎥 [视频演示脚本](docs/demo_script.md)：比赛展示或视频录制用脚本。
 
 ## 🛣️ 已知问题与改进方向
 
