@@ -1,12 +1,12 @@
 # makeroute 兒途 技术方案文档
 
-## 1. 项目定位
+##  项目定位
 
 makeroute 兒途是城市内短途游 / 微行程智能规划助手。系统把用户自然语言需求转换成结构化意图，再通过真实 POI 召回、UGC 补齐、天气与营业时间校验、真实路径代价矩阵和确定性路线规划算法，输出多条可执行路线方案。
 
 本方案重点强调：LLM 不直接编路线；核心路线生成由确定性工具完成。
 
-## 2. 整体架构图
+## 整体架构图
 
 ```mermaid
 flowchart LR
@@ -22,7 +22,31 @@ flowchart LR
     A --> C
 ```
 
-## 3. 真实实现边界
+## 项目技术栈
+
+| 层级 | 技术 / 组件 | 在项目中的作用 |
+| --- | --- | --- |
+| 运行语言 | Python 3 | 承载 CLI、Agent、工具调用、路线规划算法和外部服务客户端。 |
+| 交互入口 | `cli.py` | 提供命令行交互、路线偏好选择、起点补充、进度提示、健康检查和最终路线展示。 |
+| LLM 接入 | OpenAI-compatible Chat API；通过 `LLM_API_KEY`、`LLM_MODEL_NAME`、`LLM_BASE_URL` 配置 | 用于结构化意图识别、偏好理解和最终可读行程表达；不直接生成核心路线。 |
+| Agent 框架 | `IntentionAgent`、`OrchestrationAgent`、`.claude/skills/*/script/agent.py` | 将自然语言请求拆解为结构化任务，并按优先级编排子 Agent / Tool 执行。 |
+| 插件与懒加载 | `LazyAgentRegistry` | 扫描 `.claude/skills` 下的 skill agent，首次调用时动态导入并缓存，降低启动成本。 |
+| 工具注册 | `ToolRegistry` | 统一注册和调用 `poi_search`、`route_planning` 等确定性工具，避免核心能力分散到 Prompt 中。 |
+| 地图与 POI 服务 | 高德地图 Web Service API；通过 `AMAP_WEB_SERVICE_KEY` / `AMAP_KEY` 配置 | 用于 POI 召回、地理编码、真实路径距离和通行时间矩阵。 |
+| 路线规划算法 | 确定性 Python 路线规划；POI reward scoring、activity slot fulfillment、multimodal cost matrix、route ranking | 根据时间预算、活动顺序、偏好权重、排队风险、天气、营业状态和路径代价生成多条可执行路线。 |
+| 交通方式建模 | walking、bicycling、transit、driving、electrobike、multimodal_low_friction | 在无明确交通偏好时默认比较步行、骑行和公共交通，并选择低摩擦 / 时间更优方案。 |
+| 天气服务 | `WeatherClient` + wttr.in | 获取天气上下文，影响室内外活动选择、户外适配度和 warning。 |
+| UGC 与排队风险 | `UGCService`、本地 mock UGC、启发式估计、可选 web fallback | 为 POI 补充评分、标签、排队风险、适合人群、价格等级和注意事项。 |
+| 记忆与偏好 | `MemoryManager`、`PreferenceAgent`、本地 JSON 记忆 | 沉淀长期偏好，并在后续路线规划中作为软约束参与意图识别和路线评分。 |
+| 稳定性机制 | `llm_resilience`、`circuit_breaker`、健康检查、warning / strict failure | 为 LLM 和外部服务调用提供重试、熔断、超时回退和明确失败诊断。 |
+| 配置管理 | `config.py` + 环境变量 | 集中管理 LLM、高德、RAG、熔断和超时配置；生产环境应避免明文 key。 |
+| 数据与缓存 | `data/ugc`、`data/memory`、`data/preferences`、服务级 cache | 存储本地 UGC、用户偏好、历史记忆和外部服务缓存。 |
+| 测试与验证 | Python 回归脚本、snapshot / smoke checks、`python cli.py health` | 验证意图识别、POI 召回、路线规划、真实 API 接入和 CLI 健康状态。 |
+| 文档表达 | Markdown + Mermaid | 用于维护技术方案、架构图、链路图和部署说明。 |
+
+技术栈边界说明：LLM 主要用于“理解”和“表达”，高德地图、天气、UGC、记忆和路线规划工具负责提供真实约束与可执行数据；最终路线顺序、路径代价、时间预算和评分排序由确定性工具完成。
+
+##  真实实现边界
 
 | 模块 | 当前实现 | 边界说明 |
 | --- | --- | --- |
@@ -45,14 +69,14 @@ flowchart LR
 - `PreferenceAgent` 不直接规划路线；它负责识别和沉淀用户偏好，偏好进入后续链路时只作为软约束。
 - `plan-trip Agent` 是展示组装层。它可以润色标题、摘要和注意事项，但不能改动 `route_options` 中的地点、顺序、距离、时长、交通方式和评分。
 
-## 4. Prompt 设计策略
+## Prompt 设计策略
 
 makeroute 兒途的 Prompt 设计重点不在“让 LLM 直接生成路线”，而在两个位置：
 
 1. `IntentionAgent`：把用户自然语言需求转换成机器可消费的结构化意图。
 2. `plan-trip Agent`：把已经规划好的结构化路线整理成人类友好的表达。
 
-### 4.1 IntentionAgent Prompt 思路
+### IntentionAgent Prompt 思路
 
 目标：让 LLM 做“理解和拆解”，不做“路线编排”。
 
@@ -93,7 +117,7 @@ IntentionAgent Prompt 的设计约束：
 - 食物、酒馆、活动、同行人、天气、交通偏好应影响标签、召回短语、活动序列或交通方式，而不是直接伪造成最终路线。
 - 对路线类请求必须补齐调度链路：`event_collection -> poi_search -> route_planning -> itinerary_planning`。
 
-### 4.2 plan-trip Agent Prompt 思路
+###  plan-trip Agent Prompt 思路
 
 目标：让 LLM 做“表达整理”，不做“重新规划”。
 
@@ -115,9 +139,9 @@ plan-trip Prompt 的约束：
 
 plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：只能润色 `display_title`、`display_summary` 和 `notes`，不能改地点、顺序、距离、时长、交通方式或评分。
 
-## 5. Agent 技术细节
+##  Agent 技术细节
 
-### 5.1 IntentionAgent
+###  IntentionAgent
 
 文件：`agents/intention_agent.py`
 
@@ -129,7 +153,7 @@ plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：
 - 输出 `urban_intent_profile`，识别场景、同行人、活动序列、时间窗口、天气偏好和交通方式信号。
 - 对路线类请求强制补齐调度链路：`event_collection -> poi_search -> route_planning -> itinerary_planning`。
 
-### 5.2 PreferenceAgent / 偏好记忆
+### PreferenceAgent / 偏好记忆
 
 文件：`.claude/skills/preference/script/agent.py`、`context/memory_manager.py`
 
@@ -146,7 +170,7 @@ plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：
 - 不直接调用地图服务。
 - 不把历史偏好作为硬约束覆盖用户当前明确需求。
 
-### 5.3 OrchestrationAgent
+### OrchestrationAgent
 
 文件：`agents/orchestration_agent.py`
 
@@ -157,7 +181,7 @@ plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：
 - 对 `poi_search` 和 `route_planning` 优先走 `ToolRegistry`，不是 lazy skill。
 - 执行失败时聚合 `error_details`，并提前返回，避免无效后续链路。
 
-### 5.4 LazyAgentRegistry
+### LazyAgentRegistry
 
 文件：`agents/lazy_agent_registry.py`
 
@@ -167,7 +191,7 @@ plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：
 - 首次调用时动态导入并缓存 skill agent。
 - 明确排除 `poi_search` 和 `route_planning`，因为它们是工具，不是 skill agent。
 
-### 5.5 ToolRegistry
+### ToolRegistry
 
 文件：`tools/registry.py`
 
@@ -177,7 +201,7 @@ plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：
 - 统一 canonical name，支持 `poi-search` / `poi_search` 和 `route-planning` / `route_planning`。
 - 将 `context` 和 `previous_results` 传给工具。
 
-### 5.6 plan-trip Agent
+### plan-trip Agent
 
 文件：`.claude/skills/plan-trip/script/agent.py`
 
@@ -195,7 +219,7 @@ plan-trip 还包含一个可选的展示文案润色 Prompt，其边界更窄：
 - 不替换 `route_options` 中的主要地点。
 - 不改变路线顺序、距离、时长、交通方式或评分。
 
-## 6. Agent 编排链路
+##  Agent 编排链路
 
 ```mermaid
 sequenceDiagram
@@ -228,7 +252,7 @@ sequenceDiagram
     C-->>U: 路线展示
 ```
 
-## 7. 子 agent / skill 插件化与懒加载
+## 子 agent / skill 插件化与懒加载
 
 `.claude/skills` 中保留的是可懒加载的 Agent 包装入口：
 
@@ -246,7 +270,7 @@ sequenceDiagram
 3. 实例化后放入 `_agent_cache`。
 4. 工具型模块 `poi_search` / `route_planning` 不进入 lazy skill，避免核心算法分散。
 
-## 8. 安全熔断与稳定性机制
+## 安全熔断与稳定性机制
 
 已实现机制：
 
@@ -261,7 +285,7 @@ sequenceDiagram
 
 - `config.py` 存在历史兼容的硬编码 key 回退逻辑。部署时应改为只读取环境变量，并清理仓库中的密钥痕迹。本文档不展示任何 key。
 
-## 9. POI 召回策略
+## POI 召回策略
 
 文件：`tools/poi_search_tool.py`
 
@@ -283,7 +307,7 @@ sequenceDiagram
 - 过滤低价值泛连锁餐饮，避免“关键词命中但体验不匹配”。
 - 活动槽候选必须通过 `route_planning_tool.activity_slot_fulfillment` 校验。
 
-## 10. UGC 补齐策略
+## UGC 补齐策略
 
 文件：`services/ugc_service.py`
 
@@ -306,7 +330,7 @@ sequenceDiagram
 - `tips`
 - `source`
 
-## 11. 天气与营业时间接入
+## 天气与营业时间接入
 
 天气：
 
@@ -320,7 +344,7 @@ sequenceDiagram
 - POI 侧补齐 `opening_hours`、`opening_status`、`opening_hours_warning`。
 - route planning 会把营业状态纳入可访问性和 warning。
 
-## 12. 路径规划算法
+## 路径规划算法
 
 文件：`tools/route_planning_tool.py`
 
@@ -346,7 +370,7 @@ sequenceDiagram
 - 天气与室内外适配。
 - 活动槽满足度。
 
-## 13. 真实路径代价矩阵
+## 真实路径代价矩阵
 
 文件：`services/amap_client.py` 中 `AmapRouteClient`。
 
@@ -367,7 +391,7 @@ sequenceDiagram
 - CLI 初始化 `ToolRegistry` 时对 route planning 开启 `auto_use_amap_route_matrix=True` 和 `strict_no_fallback=True`。
 - 工具直接测试时可使用 Haversine fallback，以保证纯 Python 检查不依赖网络。
 
-## 14. 性能优化方法
+## 性能优化方法
 
 当前已实现：
 
@@ -386,7 +410,7 @@ sequenceDiagram
 - 增加流式进度条和可视化地图。
 - 引入异步 AMap 批量请求。
 
-## 15. 部署方案
+## 部署方案
 
 本地部署：
 
@@ -404,7 +428,7 @@ python cli.py
 
 服务器部署详见 [deployment.md](deployment.md)。
 
-## 16. 安全性与稳定性设计
+## 安全性与稳定性设计
 
 - API key 只应通过环境变量或安全配置注入，不应写入文档、日志或提交记录。
 - 输出 diagnostics 时不包含 key。
@@ -412,7 +436,7 @@ python cli.py
 - 对外部服务失败采用 warning / fallback / strict failure 三类策略区分。
 - 所有核心工具可通过纯 Python 脚本回归验证。
 
-## 17. 示例案例与合理性分析
+## 示例案例与合理性分析
 
 ### 案例 1：美食短途
 
